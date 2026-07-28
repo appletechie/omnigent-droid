@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omnigent-droid"
+version = "0.1.0"
+description = "Factory AI's Droid CLI as an Omnigent harness, over the Agent Client Protocol."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+  # Core supplies the executor/adapter base classes and the contribution types
+  # this plugin registers against. Unpinned upper bound while the plugin
+  # interface is young — see README for the versions this is tested on.
+  "omnigent",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+
+[project.entry-points."omnigent.community.harness"]
+droid = "omnigent.community.harness.droid.plugin:get_contribution"
+
+# PEP 420 namespace: core owns omnigent/, omnigent/community/ and
+# omnigent/community/harness/ (each an extend_path namespace package), so this
+# distribution ships only the droid subtree and mounts under them at import.
+[tool.setuptools]
+packages = [
+  "omnigent.community.harness.droid",
+  "omnigent.community.harness.droid.inner",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
