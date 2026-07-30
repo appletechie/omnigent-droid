@@ -60,6 +60,12 @@ def get_contribution() -> HarnessContribution:
         # on the droid binary rather than failing open. Auth state is Droid's
         # own and surfaces at the first turn.
         harness_install_keys={DROID_KEY: DROID_KEY},
+        # Without this, core's _build_spawn_env_from_spec returns None for
+        # droid and the per-session /model override — gated on a non-None env —
+        # never reaches HARNESS_DROID_MODEL.
+        spawn_env_builders={
+            DROID_KEY: "omnigent.community.harness.droid.spawn_env:build_spawn_env",
+        },
         model_env_keys={DROID_KEY: "HARNESS_DROID_MODEL"},
         missing_install_package={DROID_KEY: DISTRIBUTION},
         harness_labels={DROID_KEY: "Droid"},

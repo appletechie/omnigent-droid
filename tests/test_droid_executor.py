@@ -1178,7 +1178,9 @@ async def test_apply_model_swallows_rejection() -> None:
     executor._rpc = AsyncMock(  # type: ignore[method-assign]
         return_value={"error": {"message": "unknown model"}}
     )
-    await executor._apply_model("sess_x")  # no raise
+    await executor._apply_model("sess_x", "bogus-model")  # no raise
+    # A rejected switch must not be recorded as applied.
+    assert executor._applied_model is None
 
 
 # ---------------------------------------------------------------------------
@@ -1575,8 +1577,46 @@ def test_model_state_tolerates_flat_and_missing_blocks() -> None:
     assert ex.current_model_id() is None
 
 
-def test_configured_model_wins_as_current() -> None:
-    """A configured model is what the session actually runs on after set_model."""
+def test_current_model_reports_the_session_not_the_wish() -> None:
+    """
+    ``current_model_id`` reports what droid is actually on.
+
+    A configured model that has not been applied yet must NOT be reported as
+    current — that reversed the picker's meaning, showing the requested model
+    while the session still ran on droid's own.
+    """
     ex = DroidExecutor(model="sonnet")
     ex._capture_model_state({"models": {"availableModels": [], "currentModelId": "opus"}})
+    assert ex.current_model_id() == "opus"
+    ex._applied_model = "sonnet"
     assert ex.current_model_id() == "sonnet"
+
+
+@pytest.mark.asyncio
+async def test_model_override_applied_per_turn_not_only_at_session_new() -> None:
+    """
+    A model picked mid-session reaches droid on the next turn.
+
+    The ACP session outlives the pick, so applying the model only at
+    ``session/new`` left a switch silently inert: the server recorded the
+    override and the UI announced it while droid kept answering on its own
+    model. A failure here means the picker is decorative again.
+    """
+    ex = DroidExecutor()
+    ex._session_id = "sess_1"
+    ex._capture_model_state(
+        {"models": {"availableModels": [{"modelId": "grok-4.5"}], "currentModelId": "opus"}}
+    )
+    ex._rpc = AsyncMock(return_value={"result": {}})  # type: ignore[method-assign]
+
+    await ex._apply_model("sess_1", "grok-4.5")
+    ex._rpc.assert_awaited_once()
+    method, params = ex._rpc.await_args.args[0], ex._rpc.await_args.args[1]
+    assert method == "session/set_model"
+    assert params == {"sessionId": "sess_1", "modelId": "grok-4.5"}
+    assert ex.current_model_id() == "grok-4.5"
+
+    # Re-picking the same model is a no-op — no redundant round-trip.
+    ex._rpc.reset_mock()
+    await ex._apply_model("sess_1", "grok-4.5")
+    ex._rpc.assert_not_awaited()

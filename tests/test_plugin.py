@@ -57,3 +57,40 @@ def test_core_accepts_the_contribution() -> None:
         )
         is None
     )
+
+
+def test_declares_a_spawn_env_builder() -> None:
+    """
+    Without a builder the per-session model override is silently dropped.
+
+    Core's ``_build_spawn_env_from_spec`` returns ``None`` for a harness with
+    no registered builder, and the ``/model`` override it applies afterwards is
+    gated on ``env is not None`` — so the picker's choice never reached
+    ``HARNESS_DROID_MODEL`` and every session ran on droid's own default.
+    """
+    contribution = get_contribution()
+    builder = contribution.spawn_env_builders[DROID_KEY]
+    assert builder.startswith("omnigent.community.harness.")
+    # Core imports it lazily by path; a typo here fails only at session launch.
+    from omnigent.harness_plugins import load_object
+
+    assert callable(load_object(builder))
+
+
+def test_spawn_env_builder_maps_model_and_cwd() -> None:
+    """The builder emits the env vars the droid wrap actually reads."""
+    from pathlib import Path
+
+    from omnigent.community.harness.droid.spawn_env import build_spawn_env
+
+    class _Executor:
+        model = "grok-4.5"
+        config: dict[str, object] = {}
+
+    class _Spec:
+        executor = _Executor()
+        os_env = None
+
+    env = build_spawn_env(_Spec(), cwd=Path("/tmp/ws"))
+    assert env["HARNESS_DROID_MODEL"] == "grok-4.5"
+    assert env["HARNESS_DROID_CWD"] == "/tmp/ws"

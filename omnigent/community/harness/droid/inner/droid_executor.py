@@ -284,6 +284,9 @@ class DroidExecutor(Executor):
         # Populated from session/new; drives the web model picker.
         self._available_models: list[dict[str, Any]] = []  # type: ignore[explicit-any]
         self._current_model_id: str | None = None
+        # Last model we switched to via session/set_model, so a repeat pick is
+        # a no-op and the picker reports what the session actually runs on.
+        self._applied_model: str | None = None
         self._initialized: bool = False
         self._image_supported: bool = False
         self._system_prompt_sent: bool = False
@@ -574,7 +577,7 @@ class DroidExecutor(Executor):
             )
         self._session_id = server_session_id
         self._capture_model_state(result)
-        await self._apply_model(server_session_id)
+        await self._apply_model(server_session_id, self._model)
         return self._session_id
 
     def _capture_model_state(self, result: dict[str, Any]) -> None:
@@ -604,34 +607,41 @@ class DroidExecutor(Executor):
         return list(self._available_models)
 
     def current_model_id(self) -> str | None:
-        """The model this session is on — the configured override once applied."""
-        return self._model or self._current_model_id
+        """The model this session is on — the last applied switch, else droid's."""
+        return self._applied_model or self._current_model_id
 
-    async def _apply_model(self, session_id: str) -> None:
-        """Select the configured model over the wire (``session/set_model``).
+    async def _apply_model(self, session_id: str, model: str | None) -> None:
+        """Select *model* over the wire (``session/set_model``) when it changes.
 
-        No-op when no model is configured. Failures are logged and swallowed —
-        the session keeps droid's default model rather than failing the turn.
-        VERIFIED live: droid replies ``result: {}`` and the ``model`` config
-        option flips to the requested id; the ``-m`` CLI flag alone does nothing.
+        No-op when no model is asked for or it already matches the session's
+        current one, so a switch fires only when it will take effect. Failures
+        are logged and swallowed — the session keeps droid's current model
+        rather than failing the turn. VERIFIED live: droid replies
+        ``result: {}`` and the ``model`` config option flips to the requested
+        id; the ``-m`` CLI flag alone does nothing in acp mode.
+
+        :param session_id: Droid's ACP session id.
+        :param model: The model id to switch to, or ``None`` to leave it be.
         """
-        if not self._model:
+        if not model or model == self.current_model_id():
             return
         try:
             resp = await self._rpc(
                 _AGENT_METHOD_SESSION_SET_MODEL,
-                {"sessionId": session_id, "modelId": self._model},
+                {"sessionId": session_id, "modelId": model},
                 timeout=_INIT_TIMEOUT_SECONDS,
             )
         except Exception as exc:  # noqa: BLE001 — model select is best-effort
-            logger.warning("droid session/set_model(%s) failed: %s", self._model, exc)
+            logger.warning("droid session/set_model(%s) failed: %s", model, exc)
             return
         if "error" in resp:
             logger.warning(
                 "droid session/set_model(%s) rejected: %s",
-                self._model,
+                model,
                 resp["error"].get("message", resp["error"]),
             )
+            return
+        self._applied_model = model
 
     # ------------------------------------------------------------------
     # Server-initiated requests (agent → client)
@@ -1076,7 +1086,7 @@ class DroidExecutor(Executor):
         messages: list[Message],
         tools: list[Any],  # type: ignore[explicit-any]  # noqa: ARG002 — droid runs its own tool registry
         system_prompt: str,
-        config: ExecutorConfig | None = None,  # noqa: ARG002 — unused; required by the interface
+        config: ExecutorConfig | None = None,
     ) -> AsyncIterator[ExecutorEvent]:
         """Run one turn of the Droid agent loop via ACP.
 
@@ -1085,12 +1095,19 @@ class DroidExecutor(Executor):
         answering any ``session/request_permission`` mid-turn, until the final
         response (``stopReason``) arrives — then yields ``TurnComplete`` with
         token usage.
+
+        A per-request model override (the web picker / ``/model``) is applied
+        live via ``session/set_model`` before prompting — the ACP session
+        outlives the pick, so applying it only at ``session/new`` would leave a
+        mid-session switch silently inert.
         """
         try:
             if self._proc is None or self._proc.returncode is not None:
                 await self._start_process()
             await self._ensure_initialized()
             session_id = await self._ensure_session()
+            if config is not None and config.model:
+                await self._apply_model(session_id, config.model)
         except Exception as exc:  # noqa: BLE001
             yield ExecutorError(message=str(exc), retryable=False)
             return
