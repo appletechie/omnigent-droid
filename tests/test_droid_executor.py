@@ -483,9 +483,7 @@ def test_fs_delegation_flag_tracks_os_env() -> None:
 
     assert DroidExecutor()._fs_delegation is False
     assert DroidExecutor(os_env=OSEnvSpec(type="caller_process"))._fs_delegation is True
-    assert (
-        DroidExecutor(os_env=OSEnvSpec(type="caller_process", fork=True))._fs_delegation is False
-    )
+    assert DroidExecutor(os_env=OSEnvSpec(type="caller_process", fork=True))._fs_delegation is False
 
 
 @pytest.mark.asyncio
@@ -1033,9 +1031,7 @@ async def test_rpc_id_increments_monotonically() -> None:
 
 def _stdout_proc(*lines: str) -> MagicMock:
     mock_stdout = AsyncMock()
-    mock_stdout.readline = AsyncMock(
-        side_effect=[(line + "\n").encode() for line in lines] + [b""]
-    )
+    mock_stdout.readline = AsyncMock(side_effect=[(line + "\n").encode() for line in lines] + [b""])
     proc = MagicMock()
     proc.stdout = mock_stdout
     return proc
@@ -1538,3 +1534,49 @@ def test_create_app_returns_fastapi() -> None:
     from omnigent.community.harness.droid.inner import droid_harness
 
     assert isinstance(droid_harness.create_app(), FastAPI)
+
+
+def test_model_state_captured_from_session_new_acp_shape() -> None:
+    """
+    The picker's model list comes from what ``session/new`` advertised.
+
+    Droid returns a ``models`` block alongside ``sessionId``; before this it
+    was parsed and thrown away, so ``available_models()`` stayed empty and the
+    web picker had nothing to show for a droid session.
+    """
+    ex = DroidExecutor()
+    ex._capture_model_state(
+        {
+            "sessionId": "s1",
+            "models": {
+                "availableModels": [{"modelId": "opus"}, {"modelId": "sonnet"}],
+                "currentModelId": "opus",
+            },
+        }
+    )
+    assert [m["modelId"] for m in ex.available_models()] == ["opus", "sonnet"]
+    assert ex.current_model_id() == "opus"
+
+
+def test_model_state_tolerates_flat_and_missing_blocks() -> None:
+    """
+    A missing or differently-shaped ``models`` block must not raise.
+
+    The block is optional in ACP and agents differ, so an unrecognized shape
+    degrades to an empty picker. A failure here means a session/new response
+    without the expected nesting would break the turn rather than the picker.
+    """
+    ex = DroidExecutor()
+    ex._capture_model_state({"sessionId": "s1", "models": [{"modelId": "flat"}]})
+    assert [m["modelId"] for m in ex.available_models()] == ["flat"]
+
+    ex._capture_model_state({"sessionId": "s1"})
+    assert ex.available_models() == []
+    assert ex.current_model_id() is None
+
+
+def test_configured_model_wins_as_current() -> None:
+    """A configured model is what the session actually runs on after set_model."""
+    ex = DroidExecutor(model="sonnet")
+    ex._capture_model_state({"models": {"availableModels": [], "currentModelId": "opus"}})
+    assert ex.current_model_id() == "sonnet"

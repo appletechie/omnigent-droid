@@ -281,6 +281,9 @@ class DroidExecutor(Executor):
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}  # type: ignore[explicit-any]
 
         self._session_id: str | None = None
+        # Populated from session/new; drives the web model picker.
+        self._available_models: list[dict[str, Any]] = []  # type: ignore[explicit-any]
+        self._current_model_id: str | None = None
         self._initialized: bool = False
         self._image_supported: bool = False
         self._system_prompt_sent: bool = False
@@ -570,8 +573,39 @@ class DroidExecutor(Executor):
                 "droid ACP session/new response missing sessionId: " + json.dumps(resp)[:200]
             )
         self._session_id = server_session_id
+        self._capture_model_state(result)
         await self._apply_model(server_session_id)
         return self._session_id
+
+    def _capture_model_state(self, result: dict[str, Any]) -> None:
+        """Remember the model list ``session/new`` advertised, for the picker.
+
+        ACP spells this ``models: {availableModels, currentModelId}``, but the
+        block is optional and agents differ, so a flat ``models`` list is
+        accepted too. Anything unrecognized leaves the list empty rather than
+        raising — a missing picker is a lesser failure than a dead session.
+
+        :param result: The ``session/new`` result object.
+        """
+        block = result.get("models")
+        if isinstance(block, dict):
+            models = block.get("availableModels")
+            current = block.get("currentModelId")
+        else:
+            models = block
+            current = result.get("currentModelId")
+        self._available_models = (
+            [m for m in models if isinstance(m, dict)] if isinstance(models, list) else []
+        )
+        self._current_model_id = current if isinstance(current, str) else None
+
+    def available_models(self) -> list[dict[str, Any]]:
+        """Models droid advertised for this session (empty before ``session/new``)."""
+        return list(self._available_models)
+
+    def current_model_id(self) -> str | None:
+        """The model this session is on — the configured override once applied."""
+        return self._model or self._current_model_id
 
     async def _apply_model(self, session_id: str) -> None:
         """Select the configured model over the wire (``session/set_model``).
@@ -953,9 +987,7 @@ class DroidExecutor(Executor):
                 name = block.get("filename") or block.get("file_id") or "file"
                 inlined = _inline_text_file_data(block.get("file_data"))
                 if inlined:
-                    parts.append(
-                        f"--- attached file: {name} ---\n{inlined}\n--- end of {name} ---"
-                    )
+                    parts.append(f"--- attached file: {name} ---\n{inlined}\n--- end of {name} ---")
                 else:
                     parts.append(f"[attached file: {name}]")
             elif btype == "input_image" and emit_image_marker:
@@ -992,9 +1024,7 @@ class DroidExecutor(Executor):
                 content = json.dumps(raw, ensure_ascii=True)
             lines.append(f"{role}: {content}")
         lines.append("")
-        lines.append(
-            "Respond to the latest user message, using the conversation above as context."
-        )
+        lines.append("Respond to the latest user message, using the conversation above as context.")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
