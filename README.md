@@ -81,3 +81,4 @@ Apache-2.0, matching Omnigent.
 # Test with ID token exchange 1785504436
 # Test with cloud-platform scope 1785504455
 # Test with new secret 1785504778
+# Debug logging test 1785504802
