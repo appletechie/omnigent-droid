@@ -83,3 +83,4 @@ Apache-2.0, matching Omnigent.
 # Test with new secret 1785504778
 # Debug logging test 1785504802
 # Token format test 1785504831
+# Using external omnigent URL 1785504926
