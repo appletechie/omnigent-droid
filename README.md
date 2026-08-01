@@ -73,15 +73,3 @@ today.
 ## License
 
 Apache-2.0, matching Omnigent.
-# Testing Polly Webhook Fri Jul 31 06:16:37 PDT 2026
-# Test 1785504173
-# Test 1785504261
-# Test 1785504290
-# Final test 1785504326
-# Test with ID token exchange 1785504436
-# Test with cloud-platform scope 1785504455
-# Test with new secret 1785504778
-# Debug logging test 1785504802
-# Token format test 1785504831
-# Using external omnigent URL 1785504926
-# Polly webhook live test 2026-08-01T00:45:57Z
